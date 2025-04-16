@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base Application Theme -->
+    <style name="Theme.ExerciseHome" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <!-- Primary color for the app -->
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryVariant">@color/purple_700</item>
+        <item name="colorOnPrimary">@color/white</item>
+
+        <!-- Secondary color for UI elements -->
+        <item name="colorSecondary">@color/teal_200</item>
+
+        <!-- Background color for the app -->
+        <item name="colorBackground">@color/white</item>
+
+        <!-- Surface color -->
+        <item name="colorSurface">@color/white</item>
+
+        <!-- Text color -->
+        <item name="colorOnBackground">@color/black</item>
+        <item name="colorOnSurface">@color/black</item>
+    </style>
+
+</resources>

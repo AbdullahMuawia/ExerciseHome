@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- Circular View with Step Counter -->
+        <RelativeLayout
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:layout_marginBottom="20dp"
+            android:background="@drawable/circle_shape">
+
+            <TextView
+                android:id="@+id/stepCountTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Steps: 0"
+                android:textSize="24sp"
+                android:textColor="@android:color/white"
+                android:layout_centerInParent="true" />
+        </RelativeLayout>
+
+        <!-- Timer -->
+        <TextView
+            android:id="@+id/timerTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Timer: 00:00:00"
+            android:textSize="20sp"
+            android:textColor="@android:color/white"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Location Selection Section -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:background="@drawable/rounded_background"
+            android:padding="16dp"
+            android:layout_marginBottom="20dp">
+
+            <Button
+                android:id="@+id/currentLocationButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:backgroundTint="#90EE90"
+                android:text="Use Current Location"
+                android:textColor="@android:color/black" />
+
+            <Button
+                android:id="@+id/customLocationButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:backgroundTint="#ADD8E6"
+                android:text="Specify Custom Location"
+                android:textColor="@android:color/black" />
+        </LinearLayout>
+
+        <!-- Action Buttons Section -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/startButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="Start"
+                android:backgroundTint="#D8BFD8"
+                android:textColor="@android:color/black" />
+
+            <Button
+                android:id="@+id/stopButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Stop"
+                android:backgroundTint="#FF6347"
+                android:textColor="@android:color/black" />
+        </LinearLayout>
+
+        <!-- Reset and Logout Buttons Section -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/resetButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="Reset"
+                android:backgroundTint="#FFA500"
+                android:textColor="@android:color/black" />
+
+            <Button
+                android:id="@+id/logoutButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Logout"
+                android:backgroundTint="#808080"
+                android:textColor="@android:color/black" />
+        </LinearLayout>
+
+        <!-- Map View -->
+        <org.osmdroid.views.MapView
+            android:id="@+id/mapView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </LinearLayout>
+</ScrollView>

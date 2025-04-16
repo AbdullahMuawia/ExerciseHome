@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">ExerciseHome</string>
+    <string name="reset">Reset</string>
+    <string name="steps_0">Steps: 0</string>
+    <string name="email_hint">Email</string>
+    <string name="login_text">Login</string>
+    <string name="create_account_text">Create Account</string>
+    <string name="password_hint">Password</string>
+    <string name="register_text">Register</string>
+
+</resources>
