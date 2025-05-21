@@ -1,39 +1,18 @@
+// settings.gradle.kts
 pluginManagement {
     repositories {
-        google {
-            content {
-                includeGroupByRegex("com\\.android.*")
-                includeGroupByRegex("com\\.google.*")
-                includeGroupByRegex("androidx.*")
-            }
-        }
-        mavenCentral()
+        google()
+        mavenCentral() // Make sure this is present
         gradlePluginPortal()
-        repositories {
-            google()
-            mavenCentral()
-            gradlePluginPortal()
-        }
     }
-    }
-
+}
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
-        mavenCentral()
+        mavenCentral() // <<<< ENSURE THIS LINE EXISTS
+        // You might have other repositories here too (like jitpack)
     }
 }
-
-rootProject.name = "ExerciseHome"
+rootProject.name = "ExerciseHome" // Or your project name
 include(":app")
-
-
-
-
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}

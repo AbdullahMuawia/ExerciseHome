@@ -1,11 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ExerciseHome</string>
     <string name="reset">Reset</string>
-    <string name="steps_0">Steps: 0</string>
-    <string name="email_hint">Email</string>
-    <string name="login_text">Login</string>
-    <string name="create_account_text">Create Account</string>
-    <string name="password_hint">Password</string>
-    <string name="register_text">Register</string>
+    <string name="email_hint">Email</string> <string name="login_text">Login</string> <string name="create_account_text">Create Account</string> <string name="password_hint">Password</string> <string name="register_text">Register</string> <string name="toast_custom_location_set">Custom start location set</string>
+    <string name="toast_failed_custom_location">Failed to get custom location</string>
+    <string name="toast_location_signal_lost">Location signal lost</string>
+    <string name="toast_set_start_location_first">Please set a starting location first</string>
+    <string name="toast_tracking_started">Tracking Started</string>
+    <string name="toast_workout_finished_format">Workout Finished: %1$.2f km in %2$s</string> <string name="toast_tracking_reset">Tracking Reset</string>
+    <string name="toast_step_permission_needed">Step counting disabled: Activity permission needed</string>
+    <string name="toast_no_step_counter">Step counter sensor not available</string>
+    <string name="toast_failed_start_step_counter">Failed to start step counter</string>
+    <string name="toast_gpx_init_failed">Cannot start: GPX file initialization failed</string>
+    <string name="toast_storage_not_available">Storage not available</string>
+    <string name="toast_error_initializing_gpx">Error initializing GPX file</string>
+    <string name="toast_api_key_error">MAPS_API_KEY Error! Check local.properties</string>
+    <string name="toast_network_error_snapping">Network error during snap-to-road</string>
+    <string name="toast_drive_permission_required">Google Drive permission is required for uploads</string>
+    <string name="toast_signin_launch_failed">Could not launch sign-in process</string>
+    <string name="toast_signin_cancelled">Sign-in cancelled</string>
+    <string name="toast_network_error">Network error during sign-in</string>
+    <string name="toast_signin_failed_generic">Sign-in failed</string>
+    <string name="toast_signin_failed_detail">Sign-In Failed: %1$s</string> <string name="toast_signed_out">Signed out successfully</string>
+    <string name="toast_signout_failed">Sign out failed</string>
+    <string name="toast_drive_init_failed">Failed to initialize Google Drive</string>
+    <string name="toast_gpx_file_error_upload">GPX file missing or empty. Cannot upload.</string>
+    <string name="toast_drive_service_error">Drive service not available. Please sign in again.</string>
+    <string name="toast_uploading_to_drive">Uploading to Google Drive…</string>
+    <string name="toast_gpx_uploaded_success">GPX file uploaded successfully!</string>
+    <string name="toast_drive_upload_failed">Google Drive upload failed</string>
+    <string name="toast_location_permission_error">Location permission error</string>
+    <string name="toast_getting_current_location">Getting current location…</string>
+    <string name="toast_using_current_location">Using current location as start</string>
+    <string name="toast_using_last_known_location">Using last known location as start</string>
+    <string name="toast_could_not_get_location">Could not get current location</string>
+    <string name="toast_error_getting_location">Error getting location</string>
+    <string name="toast_failed_open_settings">Failed to open settings</string>
+
+    <string name="snackbar_permissions_required">Core permissions are required for app functionality.</string>
+    <string name="snackbar_location_rationale">Location permission needed to show current location.</string>
+    <string name="snackbar_signin_for_drive_upload">Sign in to Google Drive to upload GPX file?</string>
+
+    <string name="snackbar_action_settings">Settings</string>
+    <string name="snackbar_action_grant">Grant</string>
+
+    <string name="your_web_client_id">962916727234-hc010c4e9n4nr271tld5ur8m82uuqs7k.apps.googleusercontent.com</string>
+
+    <string name="button_sign_in">Sign In</string>
+    <string name="button_sign_in_drive">Sign In (Drive)</string>
+    <string name="button_sign_out_format">Sign Out (%s)</string> <string name="steps_format">Steps: %d</string> <string name="map_marker_start_point">Start Point</string>
 
 </resources>

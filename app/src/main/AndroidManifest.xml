@@ -1,39 +1,49 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.example.exercisehome">
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
 
     <application
+        android:name=".MainApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
         android:theme="@style/Theme.ExerciseHome"
-        android:allowBackup="true"
-        android:label="ExerciseHome"
-        tools:replace="android:allowBackup,android:label">
+        android:usesCleartextTraffic="true"
+        tools:replace="android:allowBackup,android:label"
+        tools:targetApi="m">
 
-        <!-- MainActivity (Launcher) -->
-        <activity android:name=".MainActivity"
-            android:exported="true">
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
+
+        <meta-data android:name="osmdroid.USER_AGENT" android:value="${applicationId}" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+                <category android:name="android.intent.category.LAUNCHER" /> </intent-filter>
         </activity>
 
-        <!-- LoginActivity Declaration -->
-        <activity android:name=".LoginActivity"
-            android:exported="true" />
+        <activity
+            android:name=".LocationPickerActivity"
+            android:exported="false" />
 
-        <!-- RegisterActivity Declaration -->
-        <activity android:name=".RegisterActivity"
-            android:exported="true" />
-
-        <!-- FileProvider -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
@@ -45,4 +55,5 @@
         </provider>
 
     </application>
+
 </manifest>
