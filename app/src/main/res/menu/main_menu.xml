@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_set_gpx_directory"
+        android:title="Set GPX Save Directory"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_upload_last_track"
+        android:title="Upload Last Track to Drive"
+        app:showAsAction="never" />
+
+</menu>

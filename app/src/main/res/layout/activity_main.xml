@@ -17,9 +17,9 @@
 
     <LinearLayout
         android:id="@+id/locationButtonsLayout"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
+        android:gravity="center"
         android:orientation="horizontal"
         android:padding="8dp"
         app:layout_constraintBottom_toTopOf="@id/dataLayout"
@@ -28,28 +28,33 @@
 
         <Button
             android:id="@+id/currentLocationButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginEnd="4dp"
             android:layout_weight="1"
-            android:text="Use Current Location"/>
+            android:text="Use Current Location" />
 
         <Button
             android:id="@+id/customLocationButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
             android:layout_weight="1"
-            android:text="Specify Custom Location"/>
+            android:text="Specify Custom Location" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/dataLayout"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="8dp"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
         app:layout_constraintBottom_toTopOf="@id/controlsLayout"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -60,21 +65,22 @@
             android:layout_height="wrap_content"
             android:layout_marginEnd="16dp"
             android:text="00:00:00"
-            android:textSize="18sp"/>
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/stepCountTextView"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Steps: 0"
-            android:textSize="18sp"/>
+            android:textSize="18sp" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/controlsLayout"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
+        android:gravity="center"
         android:orientation="horizontal"
         android:padding="8dp"
         app:layout_constraintBottom_toTopOf="@id/signInButton"
@@ -83,31 +89,35 @@
 
         <Button
             android:id="@+id/startButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:text="Start"/>
+            android:text="Start" />
 
         <Button
-            android:id="@+id/stopButton"
+            android:id="@+id/pauseButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
+            android:layout_marginStart="8dp"
             android:enabled="false"
-            android:text="Stop"/>
+            android:text="Pause" />
 
         <Button
             android:id="@+id/resetButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
+            android:layout_marginStart="8dp"
             android:enabled="false"
-            android:text="Reset"/>
+            android:text="Finish" />
 
         <Button
             android:id="@+id/takePictureButton"
+            style="?android:attr/buttonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:enabled="false"
             android:text="Take Pic" />
 
@@ -115,13 +125,13 @@
 
     <Button
         android:id="@+id/signInButton"
+        style="?android:attr/buttonStyle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
         android:layout_marginBottom="16dp"
         android:text="Sign In (Drive)"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"/>
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
