@@ -12,14 +12,12 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.location.Location
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
@@ -39,8 +37,6 @@ import kotlin.random.Random
 
 class TrackingService : Service(), SensorEventListener {
 
-    enum class TrackFollowingStatus { NOT_FOLLOWING, FOLLOWING, FINISHED }
-
     companion object {
         private const val TAG = "TrackingService"
         private const val NOTIFICATION_ID = 1
@@ -53,21 +49,26 @@ class TrackingService : Service(), SensorEventListener {
         private const val SIMULATION_POINT_INTERVAL_MS = 3000L
         private const val SIMULATION_DIRECTION_VARIABILITY_RAD = Math.PI / 7.0
         private const val SIMULATION_SCALE_DEGREES = 0.0001
+        private const val MET_WALKING = 3.5
+        private const val AVERAGE_BODY_WEIGHT_KG = 70.0
     }
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
 
-    // LiveData for the UI
+    // LiveData for UI updates
     val isTracking = MutableLiveData(false)
     val isPaused = MutableLiveData(true)
     val stepCount = MutableLiveData(0)
     val elapsedTimeSeconds = MutableLiveData(0L)
+    val caloriesBurned = MutableLiveData(0.0)
     val currentTrack = MutableLiveData<List<GeoPoint>>(emptyList())
     val lastGpxFileUri = MutableLiveData<Uri?>(null)
 
+    // Internal state variables for reliable service logic
+    private var mIsTracking = false
+    private var mIsPaused = true
 
-    // Service components and state
     private lateinit var sensorManager: SensorManager
     private var stepCounterSensor: Sensor? = null
     private var isSensorRegistered = false
@@ -86,87 +87,78 @@ class TrackingService : Service(), SensorEventListener {
     private var lastSimulatedGeoPoint: GeoPoint? = null
     private var isSimulating = false
 
-
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     inner class LocalBinder : Binder() { fun getService(): TrackingService = this@TrackingService }
+
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onCreate() {
         super.onCreate()
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createLocationCallback()
         createLocationRequest()
+        Log.d(TAG, "Service Created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     fun startTracking(startPoint: GeoPoint, simulate: Boolean) {
-        if (isTracking.value == true) return
+        if (mIsTracking) return
+        Log.d(TAG, "startTracking called")
 
         isSimulating = simulate
-        isPaused.postValue(false)
+        updateState(isTracking = true, isPaused = false)
+
+        // Reset all tracking data
         stepCount.postValue(0)
         elapsedTimeSeconds.postValue(0L)
+        caloriesBurned.postValue(0.0)
         currentTrack.postValue(listOf(startPoint))
         lastGpxFileUri.postValue(null)
         initialStepCount = null
 
         if (initializeGpxFile()) {
             addPointToGpx(startPoint, System.currentTimeMillis())
-            isTracking.postValue(true)
             startForeground(NOTIFICATION_ID, createNotification())
-            // Directly start all processes. This is the correct logic.
-            registerStepSensor()
-            startTimer()
-            if (isSimulating) {
-                startSimulation()
-            } else {
-                startLocationUpdates()
-            }
+            startListenersAndTimer()
         }
     }
 
     fun stopTracking() {
-        if (isTracking.value == false) return
-        isTracking.postValue(false)
-        isPaused.postValue(false) // Reset paused state
-        timerJob?.cancel()
-        simulationJob?.cancel()
-        unregisterStepSensor()
-        stopLocationUpdates()
+        if (!mIsTracking) return
+        Log.d(TAG, "stopTracking called")
+        updateState(isTracking = false, isPaused = true)
+        stopListenersAndTimer()
         closeGpxFile()
+        currentTrack.postValue(emptyList())
         stopForeground(true)
     }
 
     fun pauseTracking() {
-        if (isTracking.value != true || isPaused.value == true) return
-        isPaused.postValue(true)
-        timerJob?.cancel()
-        simulationJob?.cancel()
-        unregisterStepSensor()
-        stopLocationUpdates()
+        if (!mIsTracking || mIsPaused) return
+        Log.d(TAG, "pauseTracking called")
+        updateState(isTracking = true, isPaused = true)
+        stopListenersAndTimer()
     }
 
     fun resumeTracking() {
-        if (isTracking.value != true || isPaused.value == false) return
-        isPaused.postValue(false)
-        registerStepSensor()
-        startTimer()
-        if (isSimulating) {
-            startSimulation()
-        } else {
-            startLocationUpdates()
-        }
+        if (!mIsTracking || !mIsPaused) return
+        Log.d(TAG, "resumeTracking called")
+        updateState(isTracking = true, isPaused = false)
+        startListenersAndTimer()
     }
 
-    // --- THIS IS THE MAIN FIX ---
-    override fun onSensorChanged(event: SensorEvent?) {
-        // We remove the `isPaused` check. If this listener is active, it should process data.
-        if (isTracking.value != true) return
+    private fun updateState(isTracking: Boolean, isPaused: Boolean) {
+        this.mIsTracking = isTracking
+        this.mIsPaused = isPaused
+        this.isTracking.postValue(isTracking)
+        this.isPaused.postValue(isPaused)
+        Log.d(TAG, "State Updated: mIsTracking=${this.mIsTracking}, mIsPaused=${this.mIsPaused}")
+    }
 
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (!mIsTracking || mIsPaused) return
         event?.let {
             if (it.sensor.type == Sensor.TYPE_STEP_COUNTER) {
                 val currentSensorValue = it.values[0].toInt()
@@ -177,25 +169,48 @@ class TrackingService : Service(), SensorEventListener {
         }
     }
 
-    // --- THIS IS THE OTHER MAIN FIX ---
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun startListenersAndTimer() {
+        Log.d(TAG, "startListenersAndTimer called")
+        // No sensor implementation yet
+        startTimer()
+        if (isSimulating) {
+            startSimulation()
+        } else {
+            startLocationUpdates()
+        }
+    }
+
+    private fun stopListenersAndTimer() {
+        Log.d(TAG, "stopListenersAndTimer called")
+        timerJob?.cancel()
+        simulationJob?.cancel()
+        // No sensor implementation yet
+        stopLocationUpdates()
+    }
+
     private fun createLocationCallback() {
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
-                // We remove the `isPaused` check here as well.
-                // Pausing is now handled by stopping and restarting location updates.
-                if (isTracking.value == true) {
-                    locationResult.lastLocation?.let { location ->
-                        val currentPoint = GeoPoint(location.latitude, location.longitude)
-                        addPointToTrack(currentPoint)
+                Log.d(TAG, "onLocationResult received. State: mIsTracking=$mIsTracking, mIsPaused=$mIsPaused")
+                if (mIsTracking && !mIsPaused) {
+                    locationResult.lastLocation?.let {
+                        Log.d(TAG, "Adding point to track: ${it.latitude}, ${it.longitude}")
+                        addPointToTrack(GeoPoint(it.latitude, it.longitude))
                     }
+                } else {
+                    Log.w(TAG, "Location received but ignored due to state.")
                 }
             }
         }
     }
 
-    // --- The rest of the functions are correct and remain the same ---
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    private fun addPointToTrack(point: GeoPoint) {
+        val newTrack = currentTrack.value.orEmpty() + point
+        currentTrack.postValue(newTrack)
+        addPointToGpx(point, System.currentTimeMillis())
+    }
 
     private fun startTimer() {
         if (timerJob?.isActive == true) return
@@ -203,6 +218,9 @@ class TrackingService : Service(), SensorEventListener {
             while (isActive) {
                 delay(1000L)
                 elapsedTimeSeconds.postValue((elapsedTimeSeconds.value ?: 0L) + 1)
+                val caloriesPerSecond = (MET_WALKING * AVERAGE_BODY_WEIGHT_KG * 3.5) / 200 / 60
+                val newTotalCalories = (caloriesBurned.value ?: 0.0) + caloriesPerSecond
+                caloriesBurned.postValue(newTotalCalories)
             }
         }
     }
@@ -213,13 +231,10 @@ class TrackingService : Service(), SensorEventListener {
         simulationJob = serviceScope.launch {
             while (isActive) {
                 val lastPoint = lastSimulatedGeoPoint ?: break
-
                 val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_RAD) - (SIMULATION_DIRECTION_VARIABILITY_RAD / 2.0)
                 currentSimulatedDirectionRad = (currentSimulatedDirectionRad + angleChange).mod(2 * Math.PI)
-
                 val newLat = lastPoint.latitude + cos(currentSimulatedDirectionRad) * SIMULATION_SCALE_DEGREES
                 val newLon = lastPoint.longitude + sin(currentSimulatedDirectionRad) * SIMULATION_SCALE_DEGREES
-
                 if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
                     val newPoint = GeoPoint(newLat, newLon)
                     addPointToTrack(newPoint)
@@ -230,10 +245,22 @@ class TrackingService : Service(), SensorEventListener {
         }
     }
 
-    private fun addPointToTrack(point: GeoPoint) {
-        val newTrack = currentTrack.value.orEmpty() + point
-        currentTrack.postValue(newTrack)
-        addPointToGpx(point, System.currentTimeMillis())
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        Log.d(TAG, "Requesting location updates...")
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+    }
+
+    private fun stopLocationUpdates() {
+        Log.d(TAG, "Stopping location updates.")
+        fusedLocationClient.removeLocationUpdates(locationCallback)
+    }
+
+    private fun createLocationRequest() {
+        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
+            .setWaitForAccurateLocation(false)
+            .setMinUpdateIntervalMillis(FASTEST_LOCATION_UPDATE_INTERVAL_MS)
+            .build()
     }
 
     private fun closeGpxFile() {
@@ -247,16 +274,13 @@ class TrackingService : Service(), SensorEventListener {
             gpxFileWriter?.use {
                 it.append(footer)
                 gpxFileForProvider?.let { file ->
-                    // For files in the private directory, we need a FileProvider URI to share them
                     finalUri = FileProvider.getUriForFile(this, "${BuildConfig.APPLICATION_ID}.provider", file)
                 }
             }
-            // Notify the activity that the file is ready for upload
             lastGpxFileUri.postValue(finalUri)
         } catch (e: IOException) {
             Log.e(TAG, "Failed to close GPX file", e)
         } finally {
-            // Reset all file-related properties
             gpxOutputStream = null
             gpxFileWriter = null
             gpxFileForProvider = null
@@ -271,28 +295,22 @@ class TrackingService : Service(), SensorEventListener {
         val header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?><gpx xmlns=\"http://www.topografix.com/GPX/1/1\" version=\"1.1\" creator=\"ExerciseHome App\"><trk><name>Exercise Track</name><trkseg>\n"
 
         return try {
-            // If the user has chosen a custom directory, use it
             if (gpxDirUriStr != null) {
                 val dirUri = Uri.parse(gpxDirUriStr)
-                val directory = DocumentFile.fromTreeUri(this, dirUri)
-                val newFile = directory?.createFile("application/gpx+xml", filename)
-
+                val dir = DocumentFile.fromTreeUri(this, dirUri)
+                val newFile = dir?.createFile("application/gpx+xml", filename)
                 gpxFileUri = newFile?.uri
                 gpxOutputStream = gpxFileUri?.let { contentResolver.openOutputStream(it, "w") }
                 gpxOutputStream?.write(header.toByteArray())
-                Log.i(TAG, "GPX file will be saved to chosen directory: $gpxFileUri")
             } else {
-                // Otherwise, fall back to the app's private directory
                 val externalDir = getExternalFilesDir(null)
                 gpxFileForProvider = File(externalDir, filename)
                 gpxFileWriter = FileWriter(gpxFileForProvider)
                 gpxFileWriter?.append(header)
-                Log.i(TAG, "GPX file initialized in default directory: ${gpxFileForProvider?.absolutePath}")
             }
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize GPX file", e)
-            Toast.makeText(this, "Failed to create GPX file. Check storage permissions.", Toast.LENGTH_LONG).show()
             false
         }
     }
@@ -301,41 +319,10 @@ class TrackingService : Service(), SensorEventListener {
         val formattedTime = GPX_DATE_FORMAT.format(Date(timestampMs))
         val trackPoint = "<trkpt lat=\"${geoPoint.latitude}\" lon=\"${geoPoint.longitude}\"><time>$formattedTime</time></trkpt>\n"
         try {
-            // Write to the output stream if it exists, otherwise use the file writer
             gpxOutputStream?.write(trackPoint.toByteArray()) ?: gpxFileWriter?.append(trackPoint)
         } catch (e: IOException) {
             Log.e(TAG, "Failed to write to GPX file", e)
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startLocationUpdates() {
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-    }
-
-    private fun stopLocationUpdates() {
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-    }
-
-    private fun registerStepSensor() {
-        if (!isSensorRegistered && stepCounterSensor != null) {
-            sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI)
-            isSensorRegistered = true
-        }
-    }
-
-    private fun unregisterStepSensor() {
-        if (isSensorRegistered) {
-            sensorManager.unregisterListener(this)
-            isSensorRegistered = false
-        }
-    }
-
-    private fun createLocationRequest() {
-        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
-            .setWaitForAccurateLocation(false)
-            .setMinUpdateIntervalMillis(FASTEST_LOCATION_UPDATE_INTERVAL_MS)
-            .build()
     }
 
     private fun createNotification(): Notification {
@@ -353,8 +340,9 @@ class TrackingService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "Service Destroyed")
         serviceScope.cancel()
-        if (isTracking.value == true) {
+        if (mIsTracking) {
             stopTracking()
         }
     }

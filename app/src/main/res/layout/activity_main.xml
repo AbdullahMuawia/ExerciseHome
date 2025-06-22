@@ -72,7 +72,15 @@
             android:id="@+id/stepCountTextView"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
             android:text="Steps: 0"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/caloriesBurnedTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Calories: 0"
             android:textSize="18sp" />
     </LinearLayout>
 
@@ -83,7 +91,7 @@
         android:gravity="center"
         android:orientation="horizontal"
         android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@id/signInButton"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
@@ -122,16 +130,5 @@
             android:text="Take Pic" />
 
     </LinearLayout>
-
-    <Button
-        android:id="@+id/signInButton"
-        style="?android:attr/buttonStyle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        android:text="Sign In (Drive)"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

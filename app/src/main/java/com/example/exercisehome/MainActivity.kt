@@ -1,7 +1,6 @@
 package com.example.exercisehome
 
 import android.Manifest
-import android.accounts.Account
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.*
@@ -19,38 +18,17 @@ import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
-import androidx.activity.result.ActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.credentials.ClearCredentialStateRequest
-import androidx.credentials.CredentialManager
-import androidx.credentials.exceptions.ClearCredentialException
 import androidx.exifinterface.media.ExifInterface
-import androidx.lifecycle.lifecycleScope
 import com.example.exercisehome.databinding.ActivityMainBinding
-import com.google.android.gms.auth.api.identity.BeginSignInRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.auth.api.identity.SignInClient
-import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.material.snackbar.Snackbar
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
-import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
-import com.google.api.client.googleapis.json.GoogleJsonResponseException
-import com.google.api.client.http.InputStreamContent
-import com.google.api.client.http.javanet.NetHttpTransport
-import com.google.api.client.json.gson.GsonFactory
-import com.google.api.services.drive.Drive
-import com.google.api.services.drive.DriveScopes
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.osmdroid.api.IMapController
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -61,7 +39,6 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
-import com.google.api.services.drive.model.File as DriveFile
 
 class MainActivity : AppCompatActivity() {
 
@@ -71,9 +48,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "ExerciseHomePrefs"
         private const val KEY_LAST_LAT = "last_lat"
         private const val KEY_LAST_LON = "last_lon"
-        private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_GPX_DIR_URI = "gpx_directory_uri"
-        private const val DRIVE_FOLDER_NAME = "ExerciseHome_GPX_Uploads"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -118,6 +93,7 @@ class MainActivity : AppCompatActivity() {
         uri?.let {
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             saveGpxDirectory(it)
+            Snackbar.make(binding.root, "GPX files will be saved to this directory.", Snackbar.LENGTH_LONG).show()
         }
     }
 
@@ -133,37 +109,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private lateinit var credentialManager: CredentialManager
-    private lateinit var oneTapClient: SignInClient
-    private var driveService: Drive? = null
-    private var lastGpxUriForUpload: Uri? = null
-
-    private val oneTapSignInLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            try {
-                val signInCredential = oneTapClient.getSignInCredentialFromIntent(result.data)
-                handleSignInSuccess(signInCredential.id, signInCredential.displayName)
-            } catch (e: Exception) {
-                handleSignInFailure(e.localizedMessage ?: "Sign-in failed.")
-            }
-        }
-    }
-
-    private val requestGoogleDriveConsentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            lastGpxUriForUpload?.let { uploadGpxToDrive(it) }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        Configuration.getInstance().load(applicationContext, getPreferences(Context.MODE_PRIVATE))
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        credentialManager = CredentialManager.create(this)
-        oneTapClient = Identity.getSignInClient(this)
 
         checkAndRequestPermissions()
         setupMap()
@@ -182,17 +133,13 @@ class MainActivity : AppCompatActivity() {
         }
         trackingService?.elapsedTimeSeconds?.observe(this) { binding.timerTextView.text = formatDuration(it) }
         trackingService?.stepCount?.observe(this) { binding.stepCountTextView.text = "Steps: $it" }
+        trackingService?.caloriesBurned?.observe(this) { calories ->
+            binding.caloriesBurnedTextView.text = "Calories: ${calories.toInt()}"
+        }
         trackingService?.currentTrack?.observe(this) { updateMapTrack(it) }
         trackingService?.lastGpxFileUri?.observe(this) { uri ->
             uri?.let {
-                lastGpxUriForUpload = it
-                if (driveService != null) {
-                    attemptDriveUpload(it)
-                } else {
-                    Snackbar.make(binding.root, "Track saved. Sign in to auto-upload.", Snackbar.LENGTH_LONG)
-                        .setAction("Sign In") { startSignInFlow() }
-                        .show()
-                }
+                Snackbar.make(binding.root, "Track saved successfully!", Snackbar.LENGTH_LONG).show()
             }
         }
     }
@@ -218,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         binding.resetButton.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("Finish Workout")
-                .setMessage("This will stop the current workout and clear the map. The GPX file will be saved and automatically uploaded if you are signed in.")
+                .setMessage("This will stop the current workout and save the GPX file.")
                 .setPositiveButton("Finish") { _, _ ->
                     trackingService?.stopTracking()
                     pathPolyline.setPoints(emptyList())
@@ -227,136 +174,21 @@ class MainActivity : AppCompatActivity() {
                     binding.mapView.invalidate()
                     binding.timerTextView.text = formatDuration(0L)
                     binding.stepCountTextView.text = "Steps: 0"
+                    binding.caloriesBurnedTextView.text = "Calories: 0"
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
 
         binding.takePictureButton.setOnClickListener { handleTakePictureClick() }
-        binding.signInButton.setOnClickListener { if (driveService == null) startSignInFlow() else signOut() }
         binding.currentLocationButton.setOnClickListener { useCurrentLocationAsStart() }
         binding.customLocationButton.setOnClickListener {
             locationPickerLauncher.launch(Intent(this, LocationPickerActivity::class.java))
         }
     }
 
-    private suspend fun getOrCreateDriveFolderId(): String? {
-        val drive = driveService ?: return null
-        return withContext(Dispatchers.IO) {
-            try {
-                val query = "mimeType='application/vnd.google-apps.folder' and name='$DRIVE_FOLDER_NAME' and trashed=false"
-                val files = drive.files().list().setQ(query).setSpaces("drive").setFields("files(id)").execute()
-
-                if (files.files.isNotEmpty()) {
-                    return@withContext files.files[0].id
-                }
-
-                val folderMetadata = DriveFile().apply {
-                    name = DRIVE_FOLDER_NAME
-                    mimeType = "application/vnd.google-apps.folder"
-                }
-                val createdFolder = drive.files().create(folderMetadata).setFields("id").execute()
-                return@withContext createdFolder.id
-
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Could not access Drive folder.", Toast.LENGTH_SHORT).show()
-                }
-                return@withContext null
-            }
-        }
-    }
-
-    private fun uploadGpxToDrive(localGpxUri: Uri) {
-        if (driveService == null) {
-            lastGpxUriForUpload = localGpxUri
-            return
-        }
-        Toast.makeText(this, "Uploading to Google Drive…", Toast.LENGTH_SHORT).show()
-
-        lifecycleScope.launch {
-            val folderId = getOrCreateDriveFolderId()
-            if (folderId == null) {
-                Toast.makeText(this@MainActivity, "Upload failed: Could not get Drive folder.", Toast.LENGTH_LONG).show()
-                return@launch
-            }
-
-            withContext(Dispatchers.IO) {
-                try {
-                    val metadata = DriveFile().apply {
-                        name = "Workout_${System.currentTimeMillis()}.gpx"
-                        mimeType = "application/gpx+xml"
-                        parents = listOf(folderId)
-                    }
-                    contentResolver.openInputStream(localGpxUri)?.use { inputStream ->
-                        val mediaContent = InputStreamContent("application/gpx+xml", inputStream)
-                        driveService!!.files().create(metadata, mediaContent).execute()
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "GPX file uploaded!", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                } catch (e: UserRecoverableAuthIOException) {
-                    withContext(Dispatchers.Main) {
-                        requestGoogleDriveConsentLauncher.launch(e.intent)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Google Drive upload failed", e)
-                    val errorMessage = if (e is GoogleJsonResponseException) {
-                        "Google API Error ${e.statusCode}: ${e.details?.message}"
-                    } else {
-                        e.localizedMessage ?: "An unknown error occurred"
-                    }
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Upload failed: $errorMessage", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun initializeDriveService(email: String) {
-        withContext(Dispatchers.IO) {
-            try {
-                val credential = GoogleAccountCredential.usingOAuth2(
-                    this@MainActivity,
-                    // THIS IS THE KEY FIX: Using a broader scope to allow folder searching and creation.
-                    listOf(DriveScopes.DRIVE)
-                ).setSelectedAccount(Account(email, "com.google"))
-
-                driveService = Drive.Builder(
-                    NetHttpTransport(),
-                    GsonFactory.getDefaultInstance(),
-                    credential
-                ).setApplicationName(getString(R.string.app_name)).build()
-
-                withContext(Dispatchers.Main) {
-                    lastGpxUriForUpload?.let {
-                        attemptDriveUpload(it)
-                        lastGpxUriForUpload = null
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Drive service initialization failed", e)
-            }
-        }
-    }
-
-    private fun attemptDriveUpload(gpxFileUri: Uri) {
-        if (driveService != null) {
-            uploadGpxToDrive(gpxFileUri)
-        } else {
-            Snackbar.make(binding.root, "Please sign in to upload.", Snackbar.LENGTH_LONG)
-                .setAction("Sign In") { startSignInFlow() }
-                .show()
-        }
-    }
-
-    // --- All other helper methods remain the same ---
-    // (methods for lifecycle, permissions, map, camera, state, sign-in flow, menus, etc.)
-
-    override fun onResume() { super.onResume() }
-    override fun onPause() { super.onPause() }
+    override fun onResume() { super.onResume(); binding.mapView.onResume() }
+    override fun onPause() { super.onPause(); binding.mapView.onPause() }
     override fun onDestroy() {
         super.onDestroy()
         if (isBound) {
@@ -432,12 +264,6 @@ class MainActivity : AppCompatActivity() {
         return if (lat != 0f && lon != 0f) GeoPoint(lat.toDouble(), lon.toDouble()) else null
     }
 
-    private fun saveLogin(email: String) {
-        prefs.edit().putString(KEY_USER_EMAIL, email).apply()
-    }
-
-    private fun getSavedLogin(): String? = prefs.getString(KEY_USER_EMAIL, null)
-
     private fun saveGpxDirectory(uri: Uri) {
         prefs.edit().putString(KEY_GPX_DIR_URI, uri.toString()).apply()
     }
@@ -447,70 +273,6 @@ class MainActivity : AppCompatActivity() {
             userSelectedStartPoint = it
             setStartingLocationOnMap(it)
             binding.startButton.isEnabled = true
-        }
-        getSavedLogin()?.let { email ->
-            updateSignInButtonUI(true, email)
-            lifecycleScope.launch { initializeDriveService(email) }
-        }
-    }
-
-    private fun startSignInFlow() {
-        val oneTapRequest = BeginSignInRequest.builder()
-            .setGoogleIdTokenRequestOptions(
-                BeginSignInRequest.GoogleIdTokenRequestOptions.builder()
-                    .setSupported(true)
-                    .setServerClientId(getString(R.string.your_web_client_id))
-                    .setFilterByAuthorizedAccounts(false)
-                    .build()
-            )
-            .setAutoSelectEnabled(true)
-            .build()
-
-        oneTapClient.beginSignIn(oneTapRequest)
-            .addOnSuccessListener { result ->
-                try {
-                    val intentSenderRequest = IntentSenderRequest.Builder(result.pendingIntent.intentSender).build()
-                    oneTapSignInLauncher.launch(intentSenderRequest)
-                } catch (e: Exception) {
-                    handleSignInFailure("Could not launch sign-in UI.")
-                }
-            }
-            .addOnFailureListener { e ->
-                handleSignInFailure(e.localizedMessage ?: "Failed to start sign-in.")
-            }
-    }
-
-    private fun handleSignInSuccess(email: String, displayName: String?) {
-        saveLogin(email)
-        updateSignInButtonUI(true, email)
-        lifecycleScope.launch { initializeDriveService(email) }
-        Toast.makeText(this, "Signed in as ${displayName ?: email}", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun handleSignInFailure(errorMessage: String) {
-        Log.w(TAG, "Sign-In Failed: $errorMessage")
-        Toast.makeText(this, "Sign-In Failed: $errorMessage", Toast.LENGTH_LONG).show()
-    }
-
-    private fun signOut() {
-        lifecycleScope.launch {
-            try {
-                credentialManager.clearCredentialState(ClearCredentialStateRequest())
-                driveService = null
-                updateSignInButtonUI(false, null)
-                prefs.edit().remove(KEY_USER_EMAIL).apply()
-                Toast.makeText(this@MainActivity, "Signed out", Toast.LENGTH_SHORT).show()
-            } catch (e: ClearCredentialException) {
-                Log.e(TAG, "Sign out failed", e)
-            }
-        }
-    }
-
-    private fun updateSignInButtonUI(isSignedIn: Boolean, email: String?) {
-        if (isSignedIn) {
-            binding.signInButton.text = "Sign Out (${email?.substringBefore("@")})"
-        } else {
-            binding.signInButton.text = "Sign In (Drive)"
         }
     }
 
@@ -523,10 +285,6 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             R.id.action_set_gpx_directory -> {
                 selectGpxDirectoryLauncher.launch(null)
-                true
-            }
-            R.id.action_upload_last_track -> {
-                lastGpxUriForUpload?.let { attemptDriveUpload(it) } ?: Toast.makeText(this, "No recent track to upload.", Toast.LENGTH_SHORT).show()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -556,7 +314,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateMapTrack(trackPoints: List<GeoPoint>) {
         pathPolyline.setPoints(trackPoints)
         if (trackPoints.isNotEmpty()) {
-            mapController.animateTo(trackPoints.last())
+            val lastPoint = trackPoints.last()
+            mapController.animateTo(lastPoint)
         }
         binding.mapView.invalidate()
     }
