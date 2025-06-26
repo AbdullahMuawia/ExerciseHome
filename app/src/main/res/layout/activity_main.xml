@@ -4,131 +4,195 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/app_background"
     tools:context=".MainActivity">
 
-    <org.osmdroid.views.MapView
-        android:id="@+id/mapView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintBottom_toTopOf="@id/locationButtonsLayout"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <LinearLayout
-        android:id="@+id/locationButtonsLayout"
+    <!-- Toolbar at the top -->
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBarLayout"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:gravity="center"
-        android:orientation="horizontal"
-        android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@id/dataLayout"
+        android:background="?attr/colorPrimary"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
 
-        <Button
-            android:id="@+id/currentLocationButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="4dp"
-            android:layout_weight="1"
-            android:text="Use Current Location" />
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:navigationIcon="@drawable/ic_menu"
+            app:title="Exercise Home"
+            app:titleTextColor="@color/white" />
 
-        <Button
-            android:id="@+id/customLocationButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:text="Specify Custom Location" />
-    </LinearLayout>
+    </com.google.android.material.appbar.AppBarLayout>
 
+    <!-- Data bar at the bottom -->
     <LinearLayout
         android:id="@+id/dataLayout"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:background="@color/data_bar_background"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="16dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="8dp"
-        app:layout_constraintBottom_toTopOf="@id/controlsLayout"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
         <TextView
             android:id="@+id/timerTextView"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
-            android:text="00:00:00"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:layout_weight="1"
+            android:text="Time: 00:00:00"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
 
         <TextView
-            android:id="@+id/stepCountTextView"
-            android:layout_width="wrap_content"
+            android:id="@+id/distanceTextView"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Dist: 0.00 km"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+
+        <!-- UPDATED: Added the Step Count TextView -->
+        <TextView
+            android:id="@+id/stepCountTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
             android:text="Steps: 0"
-            android:textSize="18sp" />
+            android:textColor="@color/white"
+            android:textSize="14sp" />
 
         <TextView
             android:id="@+id/caloriesBurnedTextView"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="Calories: 0"
-            android:textSize="18sp" />
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="Cals: 0"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
     </LinearLayout>
 
+    <!-- BUTTONS AREA -->
+    <!-- This layout holds all control buttons and sits above the data bar -->
     <LinearLayout
-        android:id="@+id/controlsLayout"
+        android:id="@+id/buttonsArea"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:gravity="center"
-        android:orientation="horizontal"
-        android:padding="8dp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toTopOf="@id/dataLayout"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
-        <Button
-            android:id="@+id/startButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="wrap_content"
+        <!-- Location Selection Buttons (Visible initially) -->
+        <LinearLayout
+            android:id="@+id/locationControlsLayout"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Start" />
+            android:orientation="horizontal"
+            android:visibility="visible">
 
-        <Button
-            android:id="@+id/pauseButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="wrap_content"
+            <Button
+                android:id="@+id/currentLocationButton"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_background"
+                android:text="Use Current"
+                android:textColor="@color/white" />
+
+            <Button
+                android:id="@+id/customLocationButton"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_background"
+                android:text="Choose Custom"
+                android:textColor="@color/white" />
+        </LinearLayout>
+
+        <!-- Tracking Control Buttons (Initially hidden) -->
+        <LinearLayout
+            android:id="@+id/trackingControlsLayout"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:enabled="false"
-            android:text="Pause" />
+            android:orientation="horizontal"
+            android:visibility="gone">
 
-        <Button
-            android:id="@+id/resetButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:enabled="false"
-            android:text="Finish" />
+            <Button
+                android:id="@+id/startButton"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/button_background"
+                android:text="Start"
+                android:textColor="@color/white"
+                android:visibility="gone"
+                app:icon="@drawable/ic_check"
+                app:iconTint="@color/white"/>
 
-        <Button
-            android:id="@+id/takePictureButton"
-            style="?android:attr/buttonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:enabled="false"
-            android:text="Take Pic" />
+            <Button
+                android:id="@+id/pauseButton"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_background"
+                android:text="Pause"
+                android:textColor="@color/white"
+                android:visibility="gone"
+                app:icon="@drawable/ic_check"
+                app:iconTint="@color/white"/>
 
+            <Button
+                android:id="@+id/finishButton"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/button_background"
+                android:text="Finish"
+                android:textColor="@color/white"
+                android:visibility="gone"
+                app:icon="@drawable/ic_check"
+                app:iconTint="@color/white"/>
+        </LinearLayout>
     </LinearLayout>
+
+    <!-- Map View fills the remaining space -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/mapCard"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="16dp"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="8dp"
+        app:layout_constraintBottom_toTopOf="@id/buttonsArea"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/appBarLayout">
+
+        <org.osmdroid.views.MapView
+            android:id="@+id/mapView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </androidx.cardview.widget.CardView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

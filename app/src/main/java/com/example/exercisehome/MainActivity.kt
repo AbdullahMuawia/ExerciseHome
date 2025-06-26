@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -42,6 +43,14 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
+
+    private enum class UiState {
+        CHOOSING_LOCATION,
+        LOCATION_SELECTED,
+        TRACKING,
+        PAUSED
+    }
+
     companion object {
         private const val TAG = "MainActivity"
         private const val MAP_DEFAULT_ZOOM = 16.0
@@ -58,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private val simulateTrail = true
 
     private lateinit var mapController: IMapController
-    private val pathPolyline = Polyline().apply { outlinePaint.color = Color.BLUE; outlinePaint.strokeWidth = 8f }
+    private val pathPolyline = Polyline().apply { outlinePaint.color = Color.BLUE; outlinePaint.strokeWidth = 10f }
     private var startMarker: Marker? = null
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -84,13 +93,14 @@ class MainActivity : AppCompatActivity() {
                 val lon = it.getDoubleExtra("lon", 0.0)
                 userSelectedStartPoint = GeoPoint(lat, lon)
                 setStartingLocationOnMap(userSelectedStartPoint!!)
-                binding.startButton.isEnabled = true
+                updateUiForState(UiState.LOCATION_SELECTED)
             }
         }
     }
 
     private val selectGpxDirectoryLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
+            // UPDATED: Use the explicit bitwise 'or' function for integer flags
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             saveGpxDirectory(it)
             Snackbar.make(binding.root, "GPX files will be saved to this directory.", Snackbar.LENGTH_LONG).show()
@@ -114,27 +124,50 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        setSupportActionBar(binding.toolbar)
+
+        Configuration.getInstance().load(applicationContext, getPreferences(Context.MODE_PRIVATE))
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         checkAndRequestPermissions()
         setupMap()
         setupButtonClickListeners()
         restoreSavedState()
+        updateUiForState(UiState.CHOOSING_LOCATION)
 
         Intent(this, TrackingService::class.java).also { bindService(it, serviceConnection, Context.BIND_AUTO_CREATE) }
     }
 
     private fun subscribeToServiceObservers() {
         trackingService?.isTracking?.observe(this) { isTracking ->
-            updateTrackingUI(isTracking, trackingService?.isPaused?.value ?: false)
+            if (isTracking) {
+                updateUiForState(if (trackingService?.isPaused?.value == true) UiState.PAUSED else UiState.TRACKING)
+            } else {
+                if (userSelectedStartPoint != null) {
+                    updateUiForState(UiState.LOCATION_SELECTED)
+                } else {
+                    updateUiForState(UiState.CHOOSING_LOCATION)
+                }
+            }
         }
         trackingService?.isPaused?.observe(this) { isPaused ->
-            updateTrackingUI(trackingService?.isTracking?.value ?: false, isPaused)
+            if (trackingService?.isTracking?.value == true) {
+                updateUiForState(if (isPaused) UiState.PAUSED else UiState.TRACKING)
+            }
         }
-        trackingService?.elapsedTimeSeconds?.observe(this) { binding.timerTextView.text = formatDuration(it) }
-        trackingService?.stepCount?.observe(this) { binding.stepCountTextView.text = "Steps: $it" }
+        trackingService?.elapsedTimeSeconds?.observe(this) { binding.timerTextView.text = "Time: ${formatDuration(it)}" }
+
+        trackingService?.stepCount?.observe(this) { steps ->
+            binding.stepCountTextView.text = "Steps: $steps"
+        }
+
+        // UPDATED: Observing the step-based distance again.
+        trackingService?.distanceMeters?.observe(this) { distance ->
+            binding.distanceTextView.text = "Dist: %.2f km".format(distance / 1000)
+        }
+
         trackingService?.caloriesBurned?.observe(this) { calories ->
-            binding.caloriesBurnedTextView.text = "Calories: ${calories.toInt()}"
+            binding.caloriesBurnedTextView.text = "Cals: ${calories.toInt()}"
         }
         trackingService?.currentTrack?.observe(this) { updateMapTrack(it) }
         trackingService?.lastGpxFileUri?.observe(this) { uri ->
@@ -145,13 +178,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtonClickListeners() {
+        binding.currentLocationButton.setOnClickListener { useCurrentLocationAsStart() }
+        binding.customLocationButton.setOnClickListener {
+            locationPickerLauncher.launch(Intent(this, LocationPickerActivity::class.java))
+        }
+
         binding.startButton.setOnClickListener {
             userSelectedStartPoint?.let {
+                pathPolyline.setPoints(emptyList())
+                binding.mapView.invalidate()
                 saveLastLocation(it)
                 val serviceIntent = Intent(this, TrackingService::class.java)
                 ContextCompat.startForegroundService(this, serviceIntent)
                 trackingService?.startTracking(it, simulateTrail)
-            } ?: Toast.makeText(this, "Please set a start location", Toast.LENGTH_SHORT).show()
+            } ?: Toast.makeText(this, "Please set a start location first.", Toast.LENGTH_LONG).show()
         }
 
         binding.pauseButton.setOnClickListener {
@@ -162,30 +202,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.resetButton.setOnClickListener {
+        binding.finishButton.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("Finish Workout")
                 .setMessage("This will stop the current workout and save the GPX file.")
                 .setPositiveButton("Finish") { _, _ ->
+                    userSelectedStartPoint = null
                     trackingService?.stopTracking()
                     pathPolyline.setPoints(emptyList())
                     startMarker?.let { marker -> binding.mapView.overlays.remove(marker) }
                     startMarker = null
                     binding.mapView.invalidate()
-                    binding.timerTextView.text = formatDuration(0L)
+                    binding.timerTextView.text = "Time: 00:00:00"
                     binding.stepCountTextView.text = "Steps: 0"
-                    binding.caloriesBurnedTextView.text = "Calories: 0"
+                    binding.distanceTextView.text = "Dist: 0.00 km"
+                    binding.caloriesBurnedTextView.text = "Cals: 0"
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
 
-        binding.takePictureButton.setOnClickListener { handleTakePictureClick() }
-        binding.currentLocationButton.setOnClickListener { useCurrentLocationAsStart() }
-        binding.customLocationButton.setOnClickListener {
-            locationPickerLauncher.launch(Intent(this, LocationPickerActivity::class.java))
+    private fun updateUiForState(state: UiState) {
+        binding.locationControlsLayout.visibility = if (state == UiState.CHOOSING_LOCATION) View.VISIBLE else View.GONE
+        binding.trackingControlsLayout.visibility = if (state != UiState.CHOOSING_LOCATION) View.VISIBLE else View.GONE
+
+        binding.startButton.visibility = if (state == UiState.LOCATION_SELECTED) View.VISIBLE else View.GONE
+        binding.pauseButton.visibility = if (state == UiState.TRACKING || state == UiState.PAUSED) View.VISIBLE else View.GONE
+        binding.finishButton.visibility = if (state == UiState.TRACKING || state == UiState.PAUSED) View.VISIBLE else View.GONE
+
+        if (state == UiState.PAUSED) {
+            binding.pauseButton.text = "Resume"
+        } else {
+            binding.pauseButton.text = "Pause"
         }
     }
+
 
     override fun onResume() { super.onResume(); binding.mapView.onResume() }
     override fun onPause() { super.onPause(); binding.mapView.onPause() }
@@ -202,6 +254,9 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        }
 
         val permissionsToRequest = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -216,7 +271,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchCamera() {
         latestTmpUri = getTmpFileUri()
-        latestTmpUri?.let { takePictureLauncher.launch(it) }
+        latestTmpUri?.let { takePictureLauncher.launch(it) } ?: Toast.makeText(this, "Could not create image file.", Toast.LENGTH_SHORT).show()
     }
 
     private fun getTmpFileUri(): Uri? {
@@ -244,8 +299,20 @@ class MainActivity : AppCompatActivity() {
                 val location = Location("").apply {
                     latitude = latestGeoPoint.latitude
                     longitude = latestGeoPoint.longitude
+                    time = System.currentTimeMillis()
                 }
                 exifInterface.setGpsInfo(location)
+
+                val dateTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.getDefault())
+                val dateStamp = SimpleDateFormat("yyyy:MM:dd", Locale.getDefault())
+                val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                val now = Date(location.time)
+
+                exifInterface.setAttribute(ExifInterface.TAG_DATETIME, dateTime.format(now))
+                exifInterface.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateTime.format(now))
+                exifInterface.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, dateStamp.format(now))
+                exifInterface.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, timeStamp.format(now))
+
                 exifInterface.saveAttributes()
                 Toast.makeText(this, "Photo saved with location!", Toast.LENGTH_LONG).show()
             }
@@ -272,7 +339,7 @@ class MainActivity : AppCompatActivity() {
         loadLastLocation()?.let {
             userSelectedStartPoint = it
             setStartingLocationOnMap(it)
-            binding.startButton.isEnabled = true
+            updateUiForState(UiState.LOCATION_SELECTED)
         }
     }
 
@@ -283,6 +350,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
+            R.id.action_take_picture -> {
+                if (trackingService?.isTracking?.value == true) {
+                    handleTakePictureClick()
+                } else {
+                    Toast.makeText(this, "Start a workout to take a picture.", Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
             R.id.action_set_gpx_directory -> {
                 selectGpxDirectoryLauncher.launch(null)
                 true
@@ -296,19 +371,6 @@ class MainActivity : AppCompatActivity() {
         val minutes = TimeUnit.SECONDS.toMinutes(totalSeconds) % 60
         val seconds = totalSeconds % 60
         return String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
-    }
-
-    private fun updateTrackingUI(isTracking: Boolean, isPaused: Boolean) {
-        binding.startButton.isEnabled = !isTracking
-        binding.pauseButton.isEnabled = isTracking
-        binding.takePictureButton.isEnabled = isTracking && !isPaused
-        binding.resetButton.isEnabled = isTracking || pathPolyline.points.isNotEmpty()
-
-        if (isPaused) {
-            binding.pauseButton.text = "Resume"
-        } else {
-            binding.pauseButton.text = "Pause"
-        }
     }
 
     private fun updateMapTrack(trackPoints: List<GeoPoint>) {
@@ -343,7 +405,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun useCurrentLocationAsStart() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Location permission not granted", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Location permission not granted.", Toast.LENGTH_SHORT).show()
             return
         }
         fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
@@ -352,9 +414,10 @@ class MainActivity : AppCompatActivity() {
                     val geoPoint = GeoPoint(location.latitude, location.longitude)
                     userSelectedStartPoint = geoPoint
                     setStartingLocationOnMap(geoPoint)
-                    binding.startButton.isEnabled = true
+                    updateUiForState(UiState.LOCATION_SELECTED)
+                    Toast.makeText(this, "Current location set as start.", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(this, "Could not get current location", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Could not get current location.", Toast.LENGTH_SHORT).show()
                 }
             }
     }
@@ -367,14 +430,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
             permissionsToRequest.add(Manifest.permission.ACTIVITY_RECOGNITION)
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.CAMERA)
-        }
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        }
+
         if (permissionsToRequest.isNotEmpty()) {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }

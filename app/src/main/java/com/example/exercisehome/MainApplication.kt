@@ -9,7 +9,7 @@ import org.osmdroid.config.Configuration
 class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        // Perform heavy initialization in the background
+        // Perform heavy initialization in the background to avoid blocking the UI thread
         CoroutineScope(Dispatchers.IO).launch {
             Configuration.getInstance().load(
                 applicationContext,

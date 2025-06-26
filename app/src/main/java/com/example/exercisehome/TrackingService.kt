@@ -12,6 +12,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.Location
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
@@ -46,28 +47,27 @@ class TrackingService : Service(), SensorEventListener {
         private val GPX_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         private const val PREFS_NAME = "ExerciseHomePrefs"
         private const val KEY_GPX_DIR_URI = "gpx_directory_uri"
-        private const val SIMULATION_POINT_INTERVAL_MS = 3000L
-        private const val SIMULATION_DIRECTION_VARIABILITY_RAD = Math.PI / 7.0
-        private const val SIMULATION_SCALE_DEGREES = 0.0001
-        private const val MET_WALKING = 3.5
-        private const val AVERAGE_BODY_WEIGHT_KG = 70.0
+
+
+        private const val STEPS_PER_CALORIE = 25f
+
+        private const val DEFAULT_STRIDE_LENGTH_METERS = 0.7
+        private const val SIMULATION_DIRECTION_VARIABILITY_RAD = Math.PI / 8.0
+        private const val METERS_PER_DEGREE_LATITUDE = 111320.0
+        private const val STEP_BATCH_SIZE = 10
     }
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
 
-    // LiveData for UI updates
     val isTracking = MutableLiveData(false)
     val isPaused = MutableLiveData(true)
     val stepCount = MutableLiveData(0)
     val elapsedTimeSeconds = MutableLiveData(0L)
     val caloriesBurned = MutableLiveData(0.0)
+    val distanceMeters = MutableLiveData(0.0)
     val currentTrack = MutableLiveData<List<GeoPoint>>(emptyList())
     val lastGpxFileUri = MutableLiveData<Uri?>(null)
-
-    // Internal state variables for reliable service logic
-    private var mIsTracking = false
-    private var mIsPaused = true
 
     private lateinit var sensorManager: SensorManager
     private var stepCounterSensor: Sensor? = null
@@ -78,14 +78,18 @@ class TrackingService : Service(), SensorEventListener {
     private lateinit var locationRequest: LocationRequest
 
     private var timerJob: Job? = null
-    private var simulationJob: Job? = null
     private var gpxFileWriter: FileWriter? = null
     private var gpxOutputStream: OutputStream? = null
     private var gpxFileForProvider: File? = null
     private var gpxFileUri: Uri? = null
+    private var isSimulating = false
+
     private var currentSimulatedDirectionRad = 0.0
     private var lastSimulatedGeoPoint: GeoPoint? = null
-    private var isSimulating = false
+    private var strideLengthMeters = DEFAULT_STRIDE_LENGTH_METERS
+    private var stepsSinceLastAdvance = 0
+
+    private var isCurrentlyPaused = true
 
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
@@ -95,28 +99,36 @@ class TrackingService : Service(), SensorEventListener {
 
     override fun onCreate() {
         super.onCreate()
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createLocationCallback()
         createLocationRequest()
-        Log.d(TAG, "Service Created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     fun startTracking(startPoint: GeoPoint, simulate: Boolean) {
-        if (mIsTracking) return
-        Log.d(TAG, "startTracking called")
+        if (isTracking.value == true) return
 
         isSimulating = simulate
-        updateState(isTracking = true, isPaused = false)
+        isTracking.postValue(true)
+        isPaused.postValue(false)
+        isCurrentlyPaused = false
 
-        // Reset all tracking data
         stepCount.postValue(0)
         elapsedTimeSeconds.postValue(0L)
         caloriesBurned.postValue(0.0)
+        distanceMeters.postValue(0.0)
         currentTrack.postValue(listOf(startPoint))
         lastGpxFileUri.postValue(null)
         initialStepCount = null
+        stepsSinceLastAdvance = 0
+
+        if (isSimulating) {
+            lastSimulatedGeoPoint = startPoint
+            currentSimulatedDirectionRad = Random.nextDouble() * 2 * Math.PI
+        }
 
         if (initializeGpxFile()) {
             addPointToGpx(startPoint, System.currentTimeMillis())
@@ -126,91 +138,125 @@ class TrackingService : Service(), SensorEventListener {
     }
 
     fun stopTracking() {
-        if (!mIsTracking) return
-        Log.d(TAG, "stopTracking called")
-        updateState(isTracking = false, isPaused = true)
+        if (isTracking.value == false) return
+        isTracking.postValue(false)
+        isPaused.postValue(true)
+        isCurrentlyPaused = true
         stopListenersAndTimer()
         closeGpxFile()
-        currentTrack.postValue(emptyList())
-        stopForeground(true)
     }
 
     fun pauseTracking() {
-        if (!mIsTracking || mIsPaused) return
-        Log.d(TAG, "pauseTracking called")
-        updateState(isTracking = true, isPaused = true)
+        if (isTracking.value != true || isPaused.value == true) return
+        isPaused.postValue(true)
+        isCurrentlyPaused = true
         stopListenersAndTimer()
     }
 
     fun resumeTracking() {
-        if (!mIsTracking || !mIsPaused) return
-        Log.d(TAG, "resumeTracking called")
-        updateState(isTracking = true, isPaused = false)
+        if (isTracking.value != true || isPaused.value == false) return
+        isPaused.postValue(false)
+        isCurrentlyPaused = false
         startListenersAndTimer()
     }
 
-    private fun updateState(isTracking: Boolean, isPaused: Boolean) {
-        this.mIsTracking = isTracking
-        this.mIsPaused = isPaused
-        this.isTracking.postValue(isTracking)
-        this.isPaused.postValue(isPaused)
-        Log.d(TAG, "State Updated: mIsTracking=${this.mIsTracking}, mIsPaused=${this.mIsPaused}")
-    }
-
     override fun onSensorChanged(event: SensorEvent?) {
-        if (!mIsTracking || mIsPaused) return
+        if (isTracking.value != true || isCurrentlyPaused) return
         event?.let {
             if (it.sensor.type == Sensor.TYPE_STEP_COUNTER) {
+                if (initialStepCount == null) {
+                    initialStepCount = it.values[0].toInt()
+                    return@let
+                }
+
                 val currentSensorValue = it.values[0].toInt()
-                if (initialStepCount == null) { initialStepCount = currentSensorValue }
-                val steps = currentSensorValue - (initialStepCount ?: 0)
-                stepCount.postValue(steps)
+                val totalSteps = currentSensorValue - initialStepCount!!
+
+                if (totalSteps > (stepCount.value ?: 0)) {
+                    val stepsTakenNow = totalSteps - (stepCount.value ?: 0)
+                    stepCount.postValue(totalSteps)
+
+
+                    val newCalories = totalSteps / STEPS_PER_CALORIE
+                    caloriesBurned.postValue(newCalories.toDouble())
+
+                    val newDistance = totalSteps * strideLengthMeters
+                    distanceMeters.postValue(newDistance)
+
+                    if(isSimulating) {
+                        stepsSinceLastAdvance += stepsTakenNow
+                        if (stepsSinceLastAdvance >= STEP_BATCH_SIZE) {
+                            val batchesToProcess = stepsSinceLastAdvance / STEP_BATCH_SIZE
+                            for (i in 1..batchesToProcess) {
+                                advanceSimulationForBatch()
+                            }
+                            stepsSinceLastAdvance %= STEP_BATCH_SIZE
+                        }
+                    }
+                }
             }
         }
     }
 
+
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun startListenersAndTimer() {
-        Log.d(TAG, "startListenersAndTimer called")
-        // No sensor implementation yet
+        registerStepSensor()
         startTimer()
-        if (isSimulating) {
-            startSimulation()
-        } else {
+        if (!isSimulating) {
             startLocationUpdates()
         }
     }
 
     private fun stopListenersAndTimer() {
-        Log.d(TAG, "stopListenersAndTimer called")
         timerJob?.cancel()
-        simulationJob?.cancel()
-        // No sensor implementation yet
-        stopLocationUpdates()
+        unregisterStepSensor()
+        if (!isSimulating) {
+            stopLocationUpdates()
+        }
+    }
+
+    private fun advanceSimulationForBatch() {
+        val lastPoint = lastSimulatedGeoPoint ?: return
+
+        val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_RAD) - (SIMULATION_DIRECTION_VARIABILITY_RAD / 2.0)
+        currentSimulatedDirectionRad = (currentSimulatedDirectionRad + angleChange).mod(2 * Math.PI)
+
+        val distanceForBatch = STEP_BATCH_SIZE * strideLengthMeters
+
+        val stepDistanceInDegreesLat = distanceForBatch / METERS_PER_DEGREE_LATITUDE
+        val stepDistanceInDegreesLon = distanceForBatch / (METERS_PER_DEGREE_LATITUDE * cos(Math.toRadians(lastPoint.latitude)))
+
+        val newLat = lastPoint.latitude + sin(currentSimulatedDirectionRad) * stepDistanceInDegreesLat
+        val newLon = lastPoint.longitude + cos(currentSimulatedDirectionRad) * stepDistanceInDegreesLon
+
+        if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
+            val newPoint = GeoPoint(newLat, newLon)
+            addPointToTrack(newPoint)
+            lastSimulatedGeoPoint = newPoint
+        }
     }
 
     private fun createLocationCallback() {
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
-                Log.d(TAG, "onLocationResult received. State: mIsTracking=$mIsTracking, mIsPaused=$mIsPaused")
-                if (mIsTracking && !mIsPaused) {
+                if (!isCurrentlyPaused && !isSimulating) {
                     locationResult.lastLocation?.let {
-                        Log.d(TAG, "Adding point to track: ${it.latitude}, ${it.longitude}")
                         addPointToTrack(GeoPoint(it.latitude, it.longitude))
                     }
-                } else {
-                    Log.w(TAG, "Location received but ignored due to state.")
                 }
             }
         }
     }
 
     private fun addPointToTrack(point: GeoPoint) {
-        val newTrack = currentTrack.value.orEmpty() + point
+        val oldTrack = currentTrack.value.orEmpty()
+        val newTrack = oldTrack + point
         currentTrack.postValue(newTrack)
         addPointToGpx(point, System.currentTimeMillis())
     }
+
 
     private fun startTimer() {
         if (timerJob?.isActive == true) return
@@ -218,49 +264,35 @@ class TrackingService : Service(), SensorEventListener {
             while (isActive) {
                 delay(1000L)
                 elapsedTimeSeconds.postValue((elapsedTimeSeconds.value ?: 0L) + 1)
-                val caloriesPerSecond = (MET_WALKING * AVERAGE_BODY_WEIGHT_KG * 3.5) / 200 / 60
-                val newTotalCalories = (caloriesBurned.value ?: 0.0) + caloriesPerSecond
-                caloriesBurned.postValue(newTotalCalories)
-            }
-        }
-    }
-
-    private fun startSimulation() {
-        if (simulationJob?.isActive == true) return
-        lastSimulatedGeoPoint = currentTrack.value?.lastOrNull() ?: return
-        simulationJob = serviceScope.launch {
-            while (isActive) {
-                val lastPoint = lastSimulatedGeoPoint ?: break
-                val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_RAD) - (SIMULATION_DIRECTION_VARIABILITY_RAD / 2.0)
-                currentSimulatedDirectionRad = (currentSimulatedDirectionRad + angleChange).mod(2 * Math.PI)
-                val newLat = lastPoint.latitude + cos(currentSimulatedDirectionRad) * SIMULATION_SCALE_DEGREES
-                val newLon = lastPoint.longitude + sin(currentSimulatedDirectionRad) * SIMULATION_SCALE_DEGREES
-                if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
-                    val newPoint = GeoPoint(newLat, newLon)
-                    addPointToTrack(newPoint)
-                    lastSimulatedGeoPoint = newPoint
-                }
-                delay(SIMULATION_POINT_INTERVAL_MS)
             }
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun startLocationUpdates() {
-        Log.d(TAG, "Requesting location updates...")
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        try {
+            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Failed to request location updates.", e)
+        }
     }
 
     private fun stopLocationUpdates() {
-        Log.d(TAG, "Stopping location updates.")
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 
-    private fun createLocationRequest() {
-        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
-            .setWaitForAccurateLocation(false)
-            .setMinUpdateIntervalMillis(FASTEST_LOCATION_UPDATE_INTERVAL_MS)
-            .build()
+    private fun registerStepSensor() {
+        if (!isSensorRegistered && stepCounterSensor != null) {
+            sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI)
+            isSensorRegistered = true
+        }
+    }
+
+    private fun unregisterStepSensor() {
+        if (isSensorRegistered) {
+            sensorManager.unregisterListener(this)
+            isSensorRegistered = false
+        }
     }
 
     private fun closeGpxFile() {
@@ -325,6 +357,13 @@ class TrackingService : Service(), SensorEventListener {
         }
     }
 
+    private fun createLocationRequest() {
+        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
+            .setWaitForAccurateLocation(false)
+            .setMinUpdateIntervalMillis(FASTEST_LOCATION_UPDATE_INTERVAL_MS)
+            .build()
+    }
+
     private fun createNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, "Tracking Service", NotificationManager.IMPORTANCE_LOW)
@@ -340,9 +379,8 @@ class TrackingService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "Service Destroyed")
         serviceScope.cancel()
-        if (mIsTracking) {
+        if (isTracking.value == true) {
             stopTracking()
         }
     }
