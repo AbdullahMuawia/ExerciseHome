@@ -43,6 +43,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name="com.example.exercisehome.SettingsActivity"
+            android:exported="false"
+            android:label="Settings"/>
+
         <activity
             android:name=".LocationPickerActivity"
             android:exported="false" />

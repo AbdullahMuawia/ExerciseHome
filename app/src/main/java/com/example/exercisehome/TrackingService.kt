@@ -1,6 +1,5 @@
 package com.example.exercisehome
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,18 +11,15 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.location.Location
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.MutableLiveData
-import com.google.android.gms.location.*
 import kotlinx.coroutines.*
 import org.osmdroid.util.GeoPoint
 import java.io.File
@@ -32,6 +28,8 @@ import java.io.IOException
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
@@ -42,18 +40,12 @@ class TrackingService : Service(), SensorEventListener {
         private const val TAG = "TrackingService"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "TrackingServiceChannel"
-        private const val LOCATION_UPDATE_INTERVAL_MS = 4000L
-        private const val FASTEST_LOCATION_UPDATE_INTERVAL_MS = 2000L
         private val GPX_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         private const val PREFS_NAME = "ExerciseHomePrefs"
         private const val KEY_GPX_DIR_URI = "gpx_directory_uri"
 
-
         private const val STEPS_PER_CALORIE = 25f
-
-        private const val DEFAULT_STRIDE_LENGTH_METERS = 0.7
-        private const val SIMULATION_DIRECTION_VARIABILITY_RAD = Math.PI / 8.0
-        private const val METERS_PER_DEGREE_LATITUDE = 111320.0
+        private const val SIMULATION_DIRECTION_VARIABILITY_DEG = 45.0
         private const val STEP_BATCH_SIZE = 10
     }
 
@@ -73,22 +65,17 @@ class TrackingService : Service(), SensorEventListener {
     private var stepCounterSensor: Sensor? = null
     private var isSensorRegistered = false
     private var initialStepCount: Int? = null
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var locationCallback: LocationCallback
-    private lateinit var locationRequest: LocationRequest
 
     private var timerJob: Job? = null
     private var gpxFileWriter: FileWriter? = null
     private var gpxOutputStream: OutputStream? = null
     private var gpxFileForProvider: File? = null
     private var gpxFileUri: Uri? = null
-    private var isSimulating = false
 
-    private var currentSimulatedDirectionRad = 0.0
+    private var currentBearingDegrees = 0.0
     private var lastSimulatedGeoPoint: GeoPoint? = null
-    private var strideLengthMeters = DEFAULT_STRIDE_LENGTH_METERS
+    private var strideLengthMeters = 0.7f
     private var stepsSinceLastAdvance = 0
-
     private var isCurrentlyPaused = true
 
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
@@ -101,9 +88,6 @@ class TrackingService : Service(), SensorEventListener {
         super.onCreate()
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        createLocationCallback()
-        createLocationRequest()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
@@ -111,7 +95,9 @@ class TrackingService : Service(), SensorEventListener {
     fun startTracking(startPoint: GeoPoint, simulate: Boolean) {
         if (isTracking.value == true) return
 
-        isSimulating = simulate
+        strideLengthMeters = prefs.getFloat(SettingsActivity.KEY_STRIDE_LENGTH, 0.7f)
+        Log.d(TAG, "Starting workout with stride length: $strideLengthMeters m")
+
         isTracking.postValue(true)
         isPaused.postValue(false)
         isCurrentlyPaused = false
@@ -125,10 +111,8 @@ class TrackingService : Service(), SensorEventListener {
         initialStepCount = null
         stepsSinceLastAdvance = 0
 
-        if (isSimulating) {
-            lastSimulatedGeoPoint = startPoint
-            currentSimulatedDirectionRad = Random.nextDouble() * 2 * Math.PI
-        }
+        lastSimulatedGeoPoint = startPoint
+        currentBearingDegrees = Random.nextDouble() * 360.0
 
         if (initializeGpxFile()) {
             addPointToGpx(startPoint, System.currentTimeMillis())
@@ -176,78 +160,70 @@ class TrackingService : Service(), SensorEventListener {
                     val stepsTakenNow = totalSteps - (stepCount.value ?: 0)
                     stepCount.postValue(totalSteps)
 
-
                     val newCalories = totalSteps / STEPS_PER_CALORIE
                     caloriesBurned.postValue(newCalories.toDouble())
 
                     val newDistance = totalSteps * strideLengthMeters
-                    distanceMeters.postValue(newDistance)
+                    distanceMeters.postValue(newDistance.toDouble())
 
-                    if(isSimulating) {
-                        stepsSinceLastAdvance += stepsTakenNow
-                        if (stepsSinceLastAdvance >= STEP_BATCH_SIZE) {
-                            val batchesToProcess = stepsSinceLastAdvance / STEP_BATCH_SIZE
-                            for (i in 1..batchesToProcess) {
-                                advanceSimulationForBatch()
-                            }
-                            stepsSinceLastAdvance %= STEP_BATCH_SIZE
+                    stepsSinceLastAdvance += stepsTakenNow
+                    if (stepsSinceLastAdvance >= STEP_BATCH_SIZE) {
+                        val batchesToProcess = stepsSinceLastAdvance / STEP_BATCH_SIZE
+                        for (i in 1..batchesToProcess) {
+                            advanceSimulationForBatch()
                         }
+                        stepsSinceLastAdvance %= STEP_BATCH_SIZE
                     }
                 }
             }
         }
     }
-
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun startListenersAndTimer() {
         registerStepSensor()
         startTimer()
-        if (!isSimulating) {
-            startLocationUpdates()
-        }
     }
 
     private fun stopListenersAndTimer() {
         timerJob?.cancel()
         unregisterStepSensor()
-        if (!isSimulating) {
-            stopLocationUpdates()
-        }
     }
 
     private fun advanceSimulationForBatch() {
         val lastPoint = lastSimulatedGeoPoint ?: return
 
-        val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_RAD) - (SIMULATION_DIRECTION_VARIABILITY_RAD / 2.0)
-        currentSimulatedDirectionRad = (currentSimulatedDirectionRad + angleChange).mod(2 * Math.PI)
+        val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_DEG) - (SIMULATION_DIRECTION_VARIABILITY_DEG / 2.0)
+        currentBearingDegrees = (currentBearingDegrees + angleChange + 360) % 360
 
-        val distanceForBatch = STEP_BATCH_SIZE * strideLengthMeters
+        val distanceForBatch = (STEP_BATCH_SIZE * strideLengthMeters).toDouble()
 
-        val stepDistanceInDegreesLat = distanceForBatch / METERS_PER_DEGREE_LATITUDE
-        val stepDistanceInDegreesLon = distanceForBatch / (METERS_PER_DEGREE_LATITUDE * cos(Math.toRadians(lastPoint.latitude)))
+        // **THE CRITICAL FIX**: Replaced the faulty library function with a standard, reliable formula.
+        val newPoint = calculateDestinationPoint(lastPoint, distanceForBatch, currentBearingDegrees)
 
-        val newLat = lastPoint.latitude + sin(currentSimulatedDirectionRad) * stepDistanceInDegreesLat
-        val newLon = lastPoint.longitude + cos(currentSimulatedDirectionRad) * stepDistanceInDegreesLon
-
-        if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
-            val newPoint = GeoPoint(newLat, newLon)
-            addPointToTrack(newPoint)
-            lastSimulatedGeoPoint = newPoint
-        }
+        addPointToTrack(newPoint)
+        lastSimulatedGeoPoint = newPoint
     }
 
-    private fun createLocationCallback() {
-        locationCallback = object : LocationCallback() {
-            override fun onLocationResult(locationResult: LocationResult) {
-                if (!isCurrentlyPaused && !isSimulating) {
-                    locationResult.lastLocation?.let {
-                        addPointToTrack(GeoPoint(it.latitude, it.longitude))
-                    }
-                }
-            }
-        }
+    // **NEW FUNCTION**: A reliable implementation of the Haversine formula to find a destination point.
+    private fun calculateDestinationPoint(startPoint: GeoPoint, distanceMeters: Double, bearingDegrees: Double): GeoPoint {
+        val earthRadiusMeters = 6371000.0
+
+        val lat1Rad = Math.toRadians(startPoint.latitude)
+        val lon1Rad = Math.toRadians(startPoint.longitude)
+        val bearingRad = Math.toRadians(bearingDegrees)
+
+        val lat2Rad = asin(sin(lat1Rad) * cos(distanceMeters / earthRadiusMeters) +
+                cos(lat1Rad) * sin(distanceMeters / earthRadiusMeters) * cos(bearingRad))
+
+        var lon2Rad = lon1Rad + atan2(sin(bearingRad) * sin(distanceMeters / earthRadiusMeters) * cos(lat1Rad),
+            cos(distanceMeters / earthRadiusMeters) - sin(lat1Rad) * sin(lat2Rad))
+
+        // Normalize longitude to -180 to +180
+        lon2Rad = (lon2Rad + 3 * Math.PI) % (2 * Math.PI) - Math.PI
+
+        return GeoPoint(Math.toDegrees(lat2Rad), Math.toDegrees(lon2Rad))
     }
 
     private fun addPointToTrack(point: GeoPoint) {
@@ -257,7 +233,6 @@ class TrackingService : Service(), SensorEventListener {
         addPointToGpx(point, System.currentTimeMillis())
     }
 
-
     private fun startTimer() {
         if (timerJob?.isActive == true) return
         timerJob = serviceScope.launch {
@@ -266,19 +241,6 @@ class TrackingService : Service(), SensorEventListener {
                 elapsedTimeSeconds.postValue((elapsedTimeSeconds.value ?: 0L) + 1)
             }
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startLocationUpdates() {
-        try {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Failed to request location updates.", e)
-        }
-    }
-
-    private fun stopLocationUpdates() {
-        fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 
     private fun registerStepSensor() {
@@ -355,13 +317,6 @@ class TrackingService : Service(), SensorEventListener {
         } catch (e: IOException) {
             Log.e(TAG, "Failed to write to GPX file", e)
         }
-    }
-
-    private fun createLocationRequest() {
-        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
-            .setWaitForAccurateLocation(false)
-            .setMinUpdateIntervalMillis(FASTEST_LOCATION_UPDATE_INTERVAL_MS)
-            .build()
     }
 
     private fun createNotification(): Notification {

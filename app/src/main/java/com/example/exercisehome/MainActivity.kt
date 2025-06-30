@@ -43,7 +43,6 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
-
     private enum class UiState {
         CHOOSING_LOCATION,
         LOCATION_SELECTED,
@@ -67,11 +66,12 @@ class MainActivity : AppCompatActivity() {
     private val simulateTrail = true
 
     private lateinit var mapController: IMapController
-    private val pathPolyline = Polyline().apply { outlinePaint.color = Color.BLUE; outlinePaint.strokeWidth = 10f }
+    private val pathPolyline = Polyline().apply { outlinePaint.color = Color.CYAN; outlinePaint.strokeWidth = 10f }
     private var startMarker: Marker? = null
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    private var takePictureMenuItem: MenuItem? = null
 
     private var latestTmpUri: Uri? = null
     private val takePictureLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { isSuccess ->
@@ -100,7 +100,6 @@ class MainActivity : AppCompatActivity() {
 
     private val selectGpxDirectoryLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
-            // UPDATED: Use the explicit bitwise 'or' function for integer flags
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             saveGpxDirectory(it)
             Snackbar.make(binding.root, "GPX files will be saved to this directory.", Snackbar.LENGTH_LONG).show()
@@ -159,9 +158,11 @@ class MainActivity : AppCompatActivity() {
 
         trackingService?.stepCount?.observe(this) { steps ->
             binding.stepCountTextView.text = "Steps: $steps"
+            if (trackingService?.currentTrack?.value?.size ?: 0 > 1) {
+                takePictureMenuItem?.isEnabled = true
+            }
         }
 
-        // UPDATED: Observing the step-based distance again.
         trackingService?.distanceMeters?.observe(this) { distance ->
             binding.distanceTextView.text = "Dist: %.2f km".format(distance / 1000)
         }
@@ -236,8 +237,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.pauseButton.text = "Pause"
         }
-    }
 
+        takePictureMenuItem?.isEnabled = state == UiState.TRACKING || state == UiState.PAUSED
+    }
 
     override fun onResume() { super.onResume(); binding.mapView.onResume() }
     override fun onPause() { super.onPause(); binding.mapView.onPause() }
@@ -345,21 +347,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
+        takePictureMenuItem = menu.findItem(R.id.action_take_picture)
+        takePictureMenuItem?.isEnabled = false
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_take_picture -> {
-                if (trackingService?.isTracking?.value == true) {
-                    handleTakePictureClick()
-                } else {
-                    Toast.makeText(this, "Start a workout to take a picture.", Toast.LENGTH_SHORT).show()
-                }
+                handleTakePictureClick()
                 true
             }
             R.id.action_set_gpx_directory -> {
                 selectGpxDirectoryLauncher.launch(null)
+                true
+            }
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
                 true
             }
             else -> super.onOptionsItemSelected(item)
