@@ -28,10 +28,6 @@ import java.io.IOException
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.asin
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.random.Random
 
 class TrackingService : Service(), SensorEventListener {
@@ -43,9 +39,8 @@ class TrackingService : Service(), SensorEventListener {
         private val GPX_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         private const val PREFS_NAME = "ExerciseHomePrefs"
         private const val KEY_GPX_DIR_URI = "gpx_directory_uri"
-
+        private var totalSimulatedDistance = 0.0
         private const val STEPS_PER_CALORIE = 25f
-        private const val SIMULATION_DIRECTION_VARIABILITY_DEG = 45.0
         private const val STEP_BATCH_SIZE = 10
     }
 
@@ -72,7 +67,8 @@ class TrackingService : Service(), SensorEventListener {
     private var gpxFileForProvider: File? = null
     private var gpxFileUri: Uri? = null
 
-    private var currentBearingDegrees = 0.0
+    private var currentBearing = 0.0
+    private var fixedBearingDegrees = 0.0
     private var lastSimulatedGeoPoint: GeoPoint? = null
     private var strideLengthMeters = 0.7f
     private var stepsSinceLastAdvance = 0
@@ -110,9 +106,11 @@ class TrackingService : Service(), SensorEventListener {
         lastGpxFileUri.postValue(null)
         initialStepCount = null
         stepsSinceLastAdvance = 0
+        totalSimulatedDistance = 0.0
 
         lastSimulatedGeoPoint = startPoint
-        currentBearingDegrees = Random.nextDouble() * 360.0
+        // UPDATED: Set the direction ONCE for the entire workout.
+        fixedBearingDegrees = Random.nextDouble() * 360.0
 
         if (initializeGpxFile()) {
             addPointToGpx(startPoint, System.currentTimeMillis())
@@ -167,13 +165,19 @@ class TrackingService : Service(), SensorEventListener {
                     distanceMeters.postValue(newDistance.toDouble())
 
                     stepsSinceLastAdvance += stepsTakenNow
-                    if (stepsSinceLastAdvance >= STEP_BATCH_SIZE) {
-                        val batchesToProcess = stepsSinceLastAdvance / STEP_BATCH_SIZE
-                        for (i in 1..batchesToProcess) {
-                            advanceSimulationForBatch()
-                        }
-                        stepsSinceLastAdvance %= STEP_BATCH_SIZE
+                    val batchesToProcess = stepsSinceLastAdvance / STEP_BATCH_SIZE
+                    val leftoverSteps = stepsSinceLastAdvance % STEP_BATCH_SIZE
+
+                    for (i in 1..batchesToProcess) {
+                        advanceSimulationForBatch()
                     }
+
+                    if (leftoverSteps > 0) {
+                        advanceSimulationForBatch(leftoverSteps)
+                    }
+
+                    stepsSinceLastAdvance = 0
+
                 }
             }
         }
@@ -191,40 +195,25 @@ class TrackingService : Service(), SensorEventListener {
         unregisterStepSensor()
     }
 
-    private fun advanceSimulationForBatch() {
+    private fun advanceSimulationForBatch(stepCountForBatch: Int = STEP_BATCH_SIZE) {
         val lastPoint = lastSimulatedGeoPoint ?: return
+        val distanceForBatch = (stepCountForBatch * strideLengthMeters).toDouble()
+        val maxDistance = (stepCount.value ?: 0) * strideLengthMeters
 
-        val angleChange = (Random.nextDouble() * SIMULATION_DIRECTION_VARIABILITY_DEG) - (SIMULATION_DIRECTION_VARIABILITY_DEG / 2.0)
-        currentBearingDegrees = (currentBearingDegrees + angleChange + 360) % 360
+        if (totalSimulatedDistance + distanceForBatch > maxDistance) return
 
-        val distanceForBatch = (STEP_BATCH_SIZE * strideLengthMeters).toDouble()
+        // Add random bearing variation (e.g., ±15°)
+        val variation = (-15..15).random()
+        currentBearing = (currentBearing + variation + 360) % 360
 
-        // **THE CRITICAL FIX**: Replaced the faulty library function with a standard, reliable formula.
-        val newPoint = calculateDestinationPoint(lastPoint, distanceForBatch, currentBearingDegrees)
-
+        val newPoint = lastPoint.destinationPoint(distanceForBatch, currentBearing.toFloat().toDouble()
+        )
         addPointToTrack(newPoint)
         lastSimulatedGeoPoint = newPoint
+        totalSimulatedDistance += distanceForBatch
     }
 
-    // **NEW FUNCTION**: A reliable implementation of the Haversine formula to find a destination point.
-    private fun calculateDestinationPoint(startPoint: GeoPoint, distanceMeters: Double, bearingDegrees: Double): GeoPoint {
-        val earthRadiusMeters = 6371000.0
 
-        val lat1Rad = Math.toRadians(startPoint.latitude)
-        val lon1Rad = Math.toRadians(startPoint.longitude)
-        val bearingRad = Math.toRadians(bearingDegrees)
-
-        val lat2Rad = asin(sin(lat1Rad) * cos(distanceMeters / earthRadiusMeters) +
-                cos(lat1Rad) * sin(distanceMeters / earthRadiusMeters) * cos(bearingRad))
-
-        var lon2Rad = lon1Rad + atan2(sin(bearingRad) * sin(distanceMeters / earthRadiusMeters) * cos(lat1Rad),
-            cos(distanceMeters / earthRadiusMeters) - sin(lat1Rad) * sin(lat2Rad))
-
-        // Normalize longitude to -180 to +180
-        lon2Rad = (lon2Rad + 3 * Math.PI) % (2 * Math.PI) - Math.PI
-
-        return GeoPoint(Math.toDegrees(lat2Rad), Math.toDegrees(lon2Rad))
-    }
 
     private fun addPointToTrack(point: GeoPoint) {
         val oldTrack = currentTrack.value.orEmpty()
