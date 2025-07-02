@@ -16,6 +16,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.compose.ui.geometry.times
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
@@ -39,7 +40,6 @@ class TrackingService : Service(), SensorEventListener {
         private val GPX_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         private const val PREFS_NAME = "ExerciseHomePrefs"
         private const val KEY_GPX_DIR_URI = "gpx_directory_uri"
-        private var totalSimulatedDistance = 0.0
         private const val STEPS_PER_CALORIE = 25f
         private const val STEP_BATCH_SIZE = 10
     }
@@ -73,6 +73,7 @@ class TrackingService : Service(), SensorEventListener {
     private var strideLengthMeters = 0.7f
     private var stepsSinceLastAdvance = 0
     private var isCurrentlyPaused = true
+    private var totalSimulatedDistance = 0.0
 
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
@@ -109,7 +110,6 @@ class TrackingService : Service(), SensorEventListener {
         totalSimulatedDistance = 0.0
 
         lastSimulatedGeoPoint = startPoint
-        // UPDATED: Set the direction ONCE for the entire workout.
         fixedBearingDegrees = Random.nextDouble() * 360.0
 
         if (initializeGpxFile()) {
@@ -177,7 +177,6 @@ class TrackingService : Service(), SensorEventListener {
                     }
 
                     stepsSinceLastAdvance = 0
-
                 }
             }
         }
@@ -202,18 +201,26 @@ class TrackingService : Service(), SensorEventListener {
 
         if (totalSimulatedDistance + distanceForBatch > maxDistance) return
 
-        // Add random bearing variation (e.g., ±15°)
         val variation = (-15..15).random()
         currentBearing = (currentBearing + variation + 360) % 360
 
-        val newPoint = lastPoint.destinationPoint(distanceForBatch, currentBearing.toFloat().toDouble()
+        val newPoint = lastPoint.destinationPoint(distanceForBatch,
+            currentBearing.toFloat().toDouble()
         )
         addPointToTrack(newPoint)
         lastSimulatedGeoPoint = newPoint
         totalSimulatedDistance += distanceForBatch
+
+        val remainingDistance = maxDistance - totalSimulatedDistance
+        if (remainingDistance in 0.01..((strideLengthMeters * STEP_BATCH_SIZE).toDouble())) {
+            val finalPoint = newPoint.destinationPoint(remainingDistance,
+                currentBearing.toFloat().toDouble()
+            )
+            addPointToTrack(finalPoint)
+            lastSimulatedGeoPoint = finalPoint
+            totalSimulatedDistance += remainingDistance
+        }
     }
-
-
 
     private fun addPointToTrack(point: GeoPoint) {
         val oldTrack = currentTrack.value.orEmpty()

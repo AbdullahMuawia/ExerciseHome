@@ -158,9 +158,7 @@ class MainActivity : AppCompatActivity() {
 
         trackingService?.stepCount?.observe(this) { steps ->
             binding.stepCountTextView.text = "Steps: $steps"
-            if (trackingService?.currentTrack?.value?.size ?: 0 > 1) {
-                takePictureMenuItem?.isEnabled = true
-            }
+            takePictureMenuItem?.isEnabled = steps > 0
         }
 
         trackingService?.distanceMeters?.observe(this) { distance ->
